@@ -1,0 +1,56 @@
+{
+  "name": "@dis446/pi-bg-tasks",
+  "version": "0.1.0",
+  "description": "Background bash tasks for pi: detached commands, progress reporting, wake-on-completion and a live task card",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "pi-extension",
+    "background-tasks",
+    "long-running",
+    "bash",
+    "tasks"
+  ],
+  "license": "MIT",
+  "author": "Tsetsen-erdene Ganbaatar <dis446@proton.me> (https://github.com/dis446)",
+  "homepage": "https://github.com/dis446/pi-bg-tasks#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dis446/pi-bg-tasks.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dis446/pi-bg-tasks/issues"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "type": "module",
+  "files": [
+    "core.ts",
+    "index.ts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "test": "node --import ./test/resolve.mjs --test test/*.test.ts",
+    "test:core": "node --test test/core.test.ts",
+    "test:sdk": "node --import ./test/resolve.mjs --test test/sdk.test.ts",
+    "prepublishOnly": "npm test && npm pack --dry-run"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
