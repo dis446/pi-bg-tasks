@@ -1,8 +1,8 @@
 /**
  * pi-bg-tasks — background tasks for pi.
  *
- * The model is ported from jcode (https://github.com/1jehuang/jcode) and its
- * docs/BACKGROUND_TASKS.md; see README.md for the credit and the differences.
+ * The model is ported from jcode (https://github.com/1jehuang/jcode); see
+ * README.md for the credit and the differences.
  *
  *  - `bash` override: every command runs detached with output in a task file.
  *    A foreground call is handed to the background (not killed, not rerun) on

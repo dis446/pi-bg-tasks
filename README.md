@@ -37,6 +37,7 @@ told when it is done.
 - pi 1.5 or newer (`@earendil-works/pi-coding-agent`). The extension uses tool
   `outputSchema`, `registerMessageRenderer`, `registerShortcut` and the widget
   `requestRender` API.
+- Node 22.19 or newer, matching pi's own engine floor.
 - Linux or macOS. The runner uses POSIX process groups; Windows is untested.
 
 ## Install
@@ -205,6 +206,12 @@ export default createBgTasks({
 });
 ```
 
+The package ships TypeScript sources, not a build output, so that named import
+needs a runtime that loads `.ts` — pi's own loader (jiti), `tsx`, or a bundler.
+Plain `node` cannot strip types inside `node_modules`, so `node -e 'import(...)'`
+is not a supported entry point. Installing the package with pi needs no loader at
+all: pi reads `pi.extensions` from the manifest.
+
 ## How it works
 
 ```text
@@ -242,9 +249,11 @@ tool call ──► spawn (detached, own process group)
 ## Development
 
 ```bash
-npm install       # host packages as devDependencies (peer of the extension)
-npm test          # 49 tests: core, extension and end-to-end SDK
-npm run test:core # unit tests only
+npm install        # host packages as devDependencies (peers of the extension)
+npm test           # core, extension and end-to-end SDK suites
+npm run test:core  # unit tests only
+npm run typecheck  # tsc --noEmit over core.ts, index.ts and test/
+npm run ci         # typecheck + tests
 ```
 
 `npm test` also works without `node_modules`: `test/resolve.mjs` then maps the
@@ -258,11 +267,24 @@ host packages to the copy inside your own pi installation.
 - `test/resolve.mjs` — test-only resolver for pi's host packages, which pi ships
   inside a bundle rather than a flat `node_modules`.
 
-CI runs `npm test` on Node 24 (`.github/workflows/test.yml`).
+CI (`.github/workflows/test.yml`) runs `npm ci`, `npm run typecheck` and
+`npm test` on Node 22.19 and 24.
 
-There is no `tsconfig.json` on purpose: pi's package layout uses hashed install
-directories, so a strict `tsc` config would be machine- and version-specific.
-The tests run through Node's TypeScript type stripping.
+`tsconfig.json` is check-only (`noEmit`): pi loads the `.ts` sources directly, so
+nothing is built. Types resolve from the devDependency copies of the host
+packages; the tests additionally run through Node's type stripping.
+
+### Versions and releases
+
+Every version in `package.json` is exact — devDependencies included — and
+`.npmrc` sets `save-exact=true`, so a fresh install reproduces the lockfile
+instead of resolving new ranges. Host packages stay `peerDependencies: "*"` as
+pi's package docs require; they are never installed or bundled, so they add no
+supply-chain surface. `npm ci` is the only supported way to install them here.
+
+Releases are cut by pushing a `v<version>` tag: `.github/workflows/release.yml`
+re-runs `npm run ci`, checks that the tag matches `package.json`, and publishes
+with provenance (`--provenance --access public`) using an `NPM_TOKEN` secret.
 
 ## Security
 
@@ -273,11 +295,10 @@ source before installing, and read the output of anything you did not ask for.
 ## Credits
 
 This extension is a port of the background-task model from
-**[jcode](https://github.com/1jehuang/jcode)**, and its documentation
-(`docs/BACKGROUND_TASKS.md`) is the specification this implementation follows:
-detached task ownership, per-task status and output files, progress markers and
-normalisation, the notify/wake split, the stall watchdog, terminal status
-semantics, and the task card's layout and retention rules.
+**[jcode](https://github.com/1jehuang/jcode)**: detached task ownership, per-task
+status and output files, progress markers and normalisation, the notify/wake
+split, the stall watchdog, terminal status semantics, and the task card's layout
+and retention rules.
 
 All design credit belongs to jcode's authors. This repository is an independent
 TypeScript implementation written against pi's extension API — no jcode code is

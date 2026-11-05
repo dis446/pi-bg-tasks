@@ -1,7 +1,7 @@
 /**
  * pi-bg-tasks core — pi-independent task model, process runner, progress
  * parser, follower, wait and card rendering. Follows the background-task model
- * documented in https://github.com/1jehuang/jcode (docs/BACKGROUND_TASKS.md).
+ * of https://github.com/1jehuang/jcode.
  *
  * Every command runs as a detached process group (`setsid` via Node's
  * `detached: true`) whose wrapper shell appends stdout+stderr to

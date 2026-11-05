@@ -1,0 +1,19 @@
+{
+  // Type-check only; pi runs the .ts sources directly through jiti, so there is
+  // no build step and no emit.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["core.ts", "index.ts", "test/**/*.ts"]
+}
