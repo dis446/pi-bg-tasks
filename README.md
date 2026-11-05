@@ -352,8 +352,9 @@ re-runs `npm run ci`, checks that the tag matches `package.json` and is an
 ancestor of `main`, then publishes with provenance (`--provenance`,
 `--access public`). Both workflows install with `npm ci --ignore-scripts`, so no
 dependency install script runs next to a publish credential. The publish step
-prefers npm **Trusted Publishing** (OIDC, no secret); it falls back to an
-`NPM_TOKEN` secret when one exists.
+prefers npm **Trusted Publishing** (OIDC, no secret) and falls back to an
+`NPM_TOKEN` secret when one exists; the step decides that in the shell, because
+GitHub rejects a workflow that mentions `secrets` inside an `if`.
 
 ## Security
 

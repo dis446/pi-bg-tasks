@@ -40,10 +40,16 @@ jobs:
             exit 1
           fi
       # Preferred: Trusted Publishing (OIDC), no long-lived token in the repo.
-      - if: ${{ secrets.NPM_TOKEN == '' }}
-        run: npm publish --provenance --access public
-      # Fallback for repositories that still hold an automation token.
-      - if: ${{ secrets.NPM_TOKEN != '' }}
-        run: npm publish --provenance --access public
+      # The choice is made in the shell, not with `if: secrets.X`, because GitHub
+      # rejects a workflow that references `secrets` inside an if expression.
+      - name: Publish to npm
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            unset NODE_AUTH_TOKEN
+            echo "no NPM_TOKEN secret: publishing with npm Trusted Publishing (OIDC)"
+          else
+            echo "publishing with the NPM_TOKEN secret"
+          fi
+          npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
