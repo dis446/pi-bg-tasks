@@ -13,7 +13,7 @@
     "tasks"
   ],
   "license": "MIT",
-  "author": "Tsetsen-erdene Ganbaatar <dis446@proton.me> (https://github.com/dis446)",
+  "author": "Tsetsen-erdene Ganbaatar <dis446@yahoo.com> (https://github.com/dis446)",
   "homepage": "https://github.com/dis446/pi-bg-tasks#readme",
   "repository": {
     "type": "git",
@@ -52,5 +52,11 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^1.5.0",
+    "@earendil-works/pi-coding-agent": "^1.5.0",
+    "@earendil-works/pi-tui": "^1.5.0",
+    "typebox": "^1.4.4"
   }
 }

@@ -242,9 +242,13 @@ tool call ──► spawn (detached, own process group)
 ## Development
 
 ```bash
+npm install       # host packages as devDependencies (peer of the extension)
 npm test          # 49 tests: core, extension and end-to-end SDK
-npm run test:core # unit tests only, no pi runtime needed
+npm run test:core # unit tests only
 ```
+
+`npm test` also works without `node_modules`: `test/resolve.mjs` then maps the
+host packages to the copy inside your own pi installation.
 
 - `core.ts` — pi-independent task model: process runner, progress parser,
   follower, wait, card rendering. Node built-ins only.
@@ -254,9 +258,17 @@ npm run test:core # unit tests only, no pi runtime needed
 - `test/resolve.mjs` — test-only resolver for pi's host packages, which pi ships
   inside a bundle rather than a flat `node_modules`.
 
+CI runs `npm test` on Node 24 (`.github/workflows/test.yml`).
+
 There is no `tsconfig.json` on purpose: pi's package layout uses hashed install
 directories, so a strict `tsc` config would be machine- and version-specific.
 The tests run through Node's TypeScript type stripping.
+
+## Security
+
+Pi extensions run with your full user permissions and can execute arbitrary
+code; a background task runs whatever command the model asks for. Review the
+source before installing, and read the output of anything you did not ask for.
 
 ## Credits
 
