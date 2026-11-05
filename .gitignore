@@ -4,3 +4,5 @@ node_modules/
 .env
 .env.*
 .DS_Store
+# GNOME screen recordings dropped in the repo, not assets
+Screencast*

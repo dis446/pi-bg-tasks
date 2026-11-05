@@ -40,7 +40,8 @@
   "pi": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "video": "https://github.com/dis446/pi-bg-tasks/raw/refs/heads/main/docs/card-demo.mp4"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
