@@ -4,5 +4,6 @@ node_modules/
 .env
 .env.*
 .DS_Store
+__pycache__/
 # GNOME screen recordings dropped in the repo, not assets
 Screencast*
