@@ -25,6 +25,7 @@ import {
   completionText,
   describeTask,
   fmtDuration,
+  isValidId,
   listTasks,
   markDelivered,
   MIN_STALL_SECONDS,
@@ -215,7 +216,7 @@ export function createBgTasks(opts: BgOptions = {}) {
       uiCtx = ctx;
       requestRender = undefined;
       owner = ctx.sessionManager.getSessionId();
-      if (event.reason === "startup") cleanupTasks(24);
+      if (event.reason === "startup") cleanupTasks(24, Date.now(), owner);
       const resumed: Task[] = [];
       for (const t of listTasks(owner)) {
         if (t.foreground) {
@@ -288,6 +289,7 @@ export function createBgTasks(opts: BgOptions = {}) {
         if (sub === "cancel" && id) {
           const t = readTask(id);
           if (!t) return ctx.ui.notify(`no task ${id}`, "error");
+          if (t.owner !== owner) return ctx.ui.notify(`${id} belongs to another pi session`, "error");
           await cancelTask(t);
           followed.delete(id);
           updateRow(t);
@@ -364,6 +366,7 @@ export function createBgTasks(opts: BgOptions = {}) {
         cwd: ctx.cwd,
         owner,
         pid: sp.pid,
+        pidStart: sp.pidStart,
         status: "running",
         startedAt: Date.now(),
         timeoutSec: p.timeoutSec && p.timeoutSec > 0 ? p.timeoutSec : undefined,
@@ -513,8 +516,11 @@ export function createBgTasks(opts: BgOptions = {}) {
     // ------------------------------------------------------------ bg tool
 
     const resolveIds = async (p: { task_id?: string; task_ids?: string[]; latest?: boolean }, sessionOnly = true): Promise<string[] | string> => {
-      if (p.task_ids?.length) return p.task_ids;
-      if (p.task_id) return [p.task_id];
+      if (p.task_ids?.length) {
+        const bad = p.task_ids.filter((id) => !isValidId(id));
+        return bad.length ? `invalid task id: ${bad.join(", ")}` : p.task_ids;
+      }
+      if (p.task_id) return isValidId(p.task_id) ? [p.task_id] : `invalid task id: ${p.task_id}`;
       const mine = await Promise.all(listTasks(sessionOnly ? owner : undefined).map((t) => settle(t)));
       if (p.latest) return mine.length ? [mine[0].id] : "no tasks in this session";
       const running = mine.filter((t) => t.status === "running");
@@ -525,6 +531,8 @@ export function createBgTasks(opts: BgOptions = {}) {
 
     const ok = (text: string, details: Record<string, unknown> = {}) => ({ content: [{ type: "text" as const, text }], details });
     const err = (text: string) => ({ content: [{ type: "text" as const, text }], details: {}, isError: true });
+    /** Machine-wide listing stays useful, but a foreign task is labelled as such. */
+    const describeFor = (t: Task) => (t.owner === owner ? describeTask(t) : `${describeTask(t)} · other session`);
 
     const statusText = (t: Task) => {
       const ev = t.events.slice(-5).map((e) => `  ${new Date(e.at).toLocaleTimeString()} ${e.kind}: ${e.message}`);
@@ -541,7 +549,7 @@ export function createBgTasks(opts: BgOptions = {}) {
       name: "bg",
       label: "Background tasks",
       description:
-        "Manage background tasks (bash run_in_background, auto-backgrounded commands, wait_for pollers). Actions: list, status, output, tail, wait (blocks until a task finishes, reports progress or stalls, or timeout_seconds passes; wait_mode any|all|first_failure), cancel, cleanup (remove finished task files older than max_age_hours), watch (change notify/wake/stall_wake_seconds). Without task_id the only running task of this session is used.",
+        "Manage background tasks (bash run_in_background, auto-backgrounded commands, wait_for pollers). Actions: list, status, output, tail, wait (blocks until a task finishes, reports progress or stalls, or timeout_seconds passes; wait_mode any|all|first_failure), cancel, cleanup (remove finished task files older than max_age_hours), watch (change notify/wake/stall_wake_seconds). Without task_id the only running task of this session is used. Tasks of other pi sessions are listed but only readable, cancellable or cleanable with all_sessions: true.",
       promptSnippet: "Wait on, inspect, tail or cancel background tasks",
       promptGuidelines: [
         "Use bg with action \"wait\" when you have nothing independent left to do while a background task runs; never poll with sleep loops or repeated bg status calls.",
@@ -552,6 +560,9 @@ export function createBgTasks(opts: BgOptions = {}) {
         task_ids: Type.Optional(Type.Array(Type.String())),
         latest: Type.Optional(Type.Boolean({ description: "Use the most recent task of this session" })),
         session_only: Type.Optional(Type.Boolean({ description: "list: only this session's tasks (default false)" })),
+        all_sessions: Type.Optional(
+          Type.Boolean({ description: "Reach a task owned by another pi session (they are read/cancel guarded by default)" }),
+        ),
         lines: Type.Optional(Type.Number({ description: "tail: number of lines (default 40)" })),
         timeout_seconds: Type.Optional(Type.Number({ description: "wait: max seconds (default 60, max 3600)" })),
         wait_mode: Type.Optional(StringEnum(["any", "all", "first_failure"] as const)),
@@ -565,10 +576,10 @@ export function createBgTasks(opts: BgOptions = {}) {
         owner = ctx.sessionManager.getSessionId();
         if (p.action === "list") {
           const ts = await Promise.all(listTasks(p.session_only ? owner : undefined).map((t) => settle(t)));
-          return ok(ts.length ? ts.map((t) => describeTask(t)).join("\n") : "no background tasks", { count: ts.length });
+          return ok(ts.length ? ts.map(describeFor).join("\n") : "no background tasks", { count: ts.length });
         }
         if (p.action === "cleanup") {
-          const removed = cleanupTasks(p.max_age_hours ?? 24);
+          const removed = cleanupTasks(p.max_age_hours ?? 24, Date.now(), p.all_sessions ? undefined : owner);
           return ok(removed.length ? `removed ${removed.length} task(s): ${removed.join(", ")}` : "nothing to clean up");
         }
         const ids = await resolveIds(p, p.action !== "status" || !p.task_id);
@@ -576,6 +587,13 @@ export function createBgTasks(opts: BgOptions = {}) {
         const tasks = ids.map((id) => readTask(id));
         const missing = ids.filter((_, i) => !tasks[i]);
         if (missing.length) return err(`unknown task id: ${missing.join(", ")}`);
+        // Output, signals and delivery flags are per-session; metadata stays machine-wide.
+        const reaches = p.action === "output" || p.action === "tail" || p.action === "wait" || p.action === "cancel" || p.action === "watch";
+        const foreign = (tasks as Task[]).filter((t) => t.owner !== owner);
+        if (reaches && foreign.length && !p.all_sessions)
+          return err(
+            `task ${foreign.map((t) => t.id).join(", ")} belongs to another pi session; pass all_sessions: true to ${p.action} it anyway`,
+          );
         const ts = await Promise.all((tasks as Task[]).map((t) => settle(t)));
         const reportTerminal = (t: Task) => {
           if (t.status !== "running" && t.owner === owner) markDelivered(t.id);
@@ -584,7 +602,10 @@ export function createBgTasks(opts: BgOptions = {}) {
         switch (p.action) {
           case "status":
             ts.forEach(reportTerminal);
-            return ok(ts.map(statusText).join("\n\n"), { tasks: ts });
+            return ok(
+              ts.map((t) => statusText(t) + (t.owner === owner ? "" : "\n  owner: another pi session")).join("\n\n"),
+              { tasks: ts },
+            );
           case "output":
           case "tail": {
             const n = p.action === "tail" ? (p.lines ?? 40) : 2000;

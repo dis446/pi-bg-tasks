@@ -122,6 +122,12 @@ command was handed off.
 With `task_id` omitted, `bg` uses the only running task in the session; with
 several it asks for `task_id`, `task_ids` or `latest: true`.
 
+A task belongs to the pi session that started it. `list` and `status` show tasks
+of every session on the machine (marked `other session`), but `output`, `tail`,
+`wait`, `cancel` and `cleanup` stay inside the session; pass
+`all_sessions: true` to reach another session's task deliberately. `/bg cancel`
+refuses foreign ids outright.
+
 ### `wait_for`
 
 | Parameter | Description |
@@ -192,7 +198,7 @@ status but publishes no completion event — check `bg status` instead.
 | Setting | Meaning |
 | --- | --- |
 | `PI_BG_AUTO_MS` | Foreground handoff budget in ms. Default `3000`; `0` disables auto-handoff. |
-| `PI_BG_DIR` | Task directory. Default `$TMPDIR/pi-bg-tasks`. |
+| `PI_BG_DIR` | Task directory. Default `$TMPDIR/pi-bg-tasks`. Must be private to your user; it is created `0700` and tightened if it is not. |
 
 The factory also takes options when you wrap it yourself:
 
@@ -225,12 +231,16 @@ tool call ──► spawn (detached, own process group)
 - **Storage.** `$TMPDIR/pi-bg-tasks` holds `<id>.status.json` (atomic writes;
   a terminal status is never overwritten by a stale follower), `<id>.output`,
   `<id>.exit`, `<id>.cmd`. The command lives in a file, so its length is not
-  limited by `ARG_MAX`.
+  limited by `ARG_MAX`. The directory is private to your user (`0700`, files
+  `0600`, planted symlinks are removed instead of followed); if another user
+  created that path first, a private directory is used instead and the squatted
+  one is never written to.
 - **Ownership.** A task records the pi session that started it; only that
-  session is woken. Tasks are shared across pi processes on the machine, and
-  `settle()` reconciles a stale `running` record from its pid and exit file —
-  that is how a reloaded or resumed session learns what happened while it was
-  away.
+  session is woken. Tasks are shared across pi processes of the same user, and
+  `settle()` reconciles a stale `running` record from its pid, its process start
+  identity and its exit file — that is how a reloaded or resumed session learns
+  what happened while it was away. A pid whose start identity does not match is
+  treated as a stranger: never adopted, never signalled.
 - **No adoption of foreign tools.** A pi extension cannot take over a tool call
   it does not own mid-flight, so only `bash` hands off. Auto-handoff is limited
   to interactive (`tui`) sessions and direct model calls: print/JSON runs would
@@ -291,6 +301,31 @@ with provenance (`--provenance --access public`) using an `NPM_TOKEN` secret.
 Pi extensions run with your full user permissions and can execute arbitrary
 code; a background task runs whatever command the model asks for. Review the
 source before installing, and read the output of anything you did not ask for.
+
+The task directory is the only shared surface, and it is defended on the
+assumption that it can be hostile:
+
+- **Private by default.** Created `0700` with `0600` files, because `<id>.cmd`
+  and `<id>.output` contain the command text and its output. A world-writable
+  or foreign-owned directory is tightened when we own it, and never used when
+  someone else owns it.
+- **Derived paths.** Task ids are validated as `[0-9a-z]` and every file path is
+  rebuilt from the id, so a record read from disk cannot redirect a read, a
+  delete or a signal outside the directory.
+- **Process identity.** Each task records its process start time (ProcFS
+  `starttime`, `ps -o lstart` elsewhere) next to the pid; a mismatched identity
+  is never adopted and never signalled, so a reused pid cannot be killed by a
+  cancel or a timeout.
+- **Session isolation.** Output, waits, cancels, watch changes and cleanup are
+  scoped to the session that owns the task.
+- **No network.** The extension makes no outbound request, sends no telemetry,
+  and evaluates no code beyond the commands you ask for. The check text of a
+  `wait_for` poller travels in the environment, never interpolated into a shell
+  string.
+
+Residual: a task's output reaches the model verbatim (it is command output), and
+`process.env` is passed to every task, as pi's own `bash` does. Keep secrets out
+of command text you do not want on disk in your own task directory.
 
 ## Credits
 

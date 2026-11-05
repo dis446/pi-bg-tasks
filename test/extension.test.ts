@@ -456,3 +456,93 @@ test("card truncates to the available width and clears when nothing is left", as
   await sleep(400);
   assert.equal(h.statuses.get("bg-tasks"), undefined);
 });
+
+// ------------------------------------------------------------ security regressions
+
+/** A task record owned by another pi session, finished, with known output. */
+async function foreignTask(owner: string, command = "echo other-session-secret") {
+  const { spawnProcess, writeTask } = await import("../core.ts");
+  const sp = spawnProcess({ command, cwd: process.cwd() });
+  sp.child.unref();
+  writeTask({
+    id: sp.id, label: "other work", command, cwd: process.cwd(), owner, pid: sp.pid, pidStart: sp.pidStart,
+    status: "running", startedAt: Date.now(), events: [], notify: true, wake: false, origin: "background",
+    outputPath: sp.outputPath, exitPath: sp.exitPath,
+  });
+  return sp;
+}
+
+test("bg will not read another session's output unless asked with all_sessions", async () => {
+  const h = harness();
+  await start(h);
+  const sp = await foreignTask("someone-else");
+  await until(() => readTask(sp.id)?.status !== "running");
+  const bg = h.tools.get("bg");
+
+  const denied = await run(bg, { action: "output", task_id: sp.id }, h.ctx);
+  assert.equal(denied.isError, true);
+  assert.match(denied.content[0].text, /another pi session/);
+  assert.match(denied.content[0].text, /all_sessions: true/);
+  assert.doesNotMatch(denied.content[0].text, /other-session-secret/);
+
+  const allowed = await run(bg, { action: "output", task_id: sp.id, all_sessions: true }, h.ctx);
+  assert.equal(allowed.isError, undefined);
+  assert.match(allowed.content[0].text, /other-session-secret/);
+
+  // machine-wide listing still works, and marks the owner
+  const list = await run(bg, { action: "list" }, h.ctx);
+  assert.match(list.content[0].text, new RegExp(`${sp.id}.*other session`));
+});
+
+test("bg will not cancel or clean up another session's task unless asked", async () => {
+  const h = harness();
+  await start(h);
+  const sp = await foreignTask("someone-else", "sleep 30");
+  const bg = h.tools.get("bg");
+
+  const denied = await run(bg, { action: "cancel", task_id: sp.id }, h.ctx);
+  assert.equal(denied.isError, true);
+  assert.equal(readTask(sp.id)!.status, "running", "still running: not cancelled");
+  assert.ok(isAlive(sp.pid), "process untouched");
+
+  const allowed = await run(bg, { action: "cancel", task_id: sp.id, all_sessions: true }, h.ctx);
+  assert.equal(allowed.isError, undefined);
+  assert.equal(readTask(sp.id)!.status, "failed");
+
+  // cleanup skips foreign tasks by default
+  const done = await foreignTask("someone-else", "true");
+  const { settle } = await import("../core.ts");
+  await until(() => {
+    void settle(readTask(done.id)!);
+    return readTask(done.id)?.status !== "running";
+  });
+  await run(bg, { action: "cleanup", max_age_hours: 0 }, h.ctx);
+  assert.ok(readTask(done.id), "foreign record survives a default cleanup");
+  await run(bg, { action: "cleanup", max_age_hours: 0, all_sessions: true }, h.ctx);
+  assert.equal(readTask(done.id), undefined);
+});
+
+test("/bg cancel refuses a task of another session", async () => {
+  const h = harness();
+  await start(h);
+  const sp = await foreignTask("someone-else", "sleep 30");
+  await h.commands.get("bg").handler(`cancel ${sp.id}`, h.ctx);
+  assert.match(h.notices.pop()!, /another pi session/);
+  assert.equal(readTask(sp.id)!.status, "running");
+  assert.ok(isAlive(sp.pid));
+  const { cancelTask } = await import("../core.ts");
+  await cancelTask(readTask(sp.id)!);
+});
+
+test("bg rejects a task id that is a path", async () => {
+  const h = harness();
+  await start(h);
+  const bg = h.tools.get("bg");
+  for (const bad of ["../../etc/passwd", "a/b", ".."]) {
+    const r = await run(bg, { action: "output", task_id: bad }, h.ctx);
+    assert.equal(r.isError, true, bad);
+    assert.match(r.content[0].text, /invalid task id/);
+  }
+  const many = await run(bg, { action: "status", task_ids: ["ok1", "../x"] }, h.ctx);
+  assert.match(many.content[0].text, /invalid task id/);
+});

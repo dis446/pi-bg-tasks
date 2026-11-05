@@ -1,16 +1,19 @@
 // Unit tests for core.ts — run: node --test pi/agent/extensions/bg-tasks/test/
 import { strict as assert } from "node:assert";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
 process.env.PI_BG_DIR = mkdtempSync(join(tmpdir(), "pi-bg-test-"));
+const tdir = process.env.PI_BG_DIR;
+void tdir;
 const core = await import("../core.ts");
 const {
-  advance, bar, cancelTask, cleanupTasks, isAlive, listTasks, markDelivered, mergeProgress, newFollowState,
-  newTaskId, normalizeProgress, parseProgressLine, readTask, renderCard, retainRows, rowFromTask, settle,
-  sleep, spawnProcess, waitTasks, writeTask,
+  advance, bar, cancelTask, cleanupTasks, cmdPath, isAlive, isValidId, killGroup, listTasks, markDelivered, mergeProgress,
+  newFollowState, newTaskId, normalizeProgress, parseProgressLine, processStartId, readTask, renderCard, retainRows,
+  rowFromTask, settle, sleep, spawnProcess, taskDir, waitTasks, writeTask,
 } = core;
 type Task = import("../core.ts").Task;
 
@@ -316,3 +319,92 @@ test("rowFromTask carries progress and terminal state", () => {
   assert.equal(r.state, "running");
   assert.equal(rowFromTask({ ...t, status: "failed", finishedAt: now + 5 }, now).updatedAt, now + 5);
 });
+
+// ------------------------------------------------------------ security regressions
+
+const priv = (p: string) => (statSync(p).mode & 0o077) === 0;
+
+test("task dir is private: a loose directory is tightened and files are 0600", async () => {
+  const loose = mkdtempSync(join(tmpdir(), "pi-bg-loose-"));
+  chmodSync(loose, 0o777);
+  await withEnv("PI_BG_DIR", loose, () => {
+    const sp = spawnProcess({ command: "echo hi", cwd: process.cwd() });
+    sp.child.unref();
+    assert.ok(priv(loose), "directory is not group/other accessible");
+    assert.ok(priv(sp.outputPath), "output file is private");
+    assert.ok(priv(cmdPath(sp.id)), "command file is private (it holds the command text)");
+  });
+});
+
+test("a planted symlink is removed, never written through", async () => {
+  const dir = taskDir();
+  const target = join(dir, `target-${Date.now()}`);
+  writeFileSync(target, "keep");
+  const id = "planted1";
+  symlinkSync(target, join(dir, `${id}.cmd`));
+  const sp = spawnProcess({ id, command: "echo x", cwd: process.cwd() });
+  sp.child.unref();
+  assert.equal(readFileSync(target, "utf-8"), "keep", "symlink target untouched");
+  assert.ok(!statSync(join(dir, `${id}.cmd`)).isSymbolicLink(), "planted link replaced by a real file");
+  rmSync(target, { force: true });
+});
+
+test("pid identity: a reused pid is never adopted or signalled", async () => {
+  const sp = spawnProcess({ command: "sleep 30", cwd: process.cwd() });
+  sp.child.unref();
+  assert.ok(sp.pidStart, "spawn records a start identity");
+  const t: Task = {
+    id: sp.id, label: "sleep 30", command: "sleep 30", cwd: process.cwd(), owner: "test", pid: sp.pid,
+    pidStart: `${sp.pidStart}-bogus`, status: "running", startedAt: Date.now(), events: [], notify: true,
+    wake: false, origin: "background", outputPath: sp.outputPath, exitPath: sp.exitPath,
+  };
+  writeTask(t);
+  // the live process belongs to somebody else now (pid reuse): settle must not touch it
+  const settled = await settle(readTask(t.id)!);
+  assert.equal(settled.status, "failed");
+  assert.match(settled.error!, /without recording a status/);
+  await killGroup(sp.pid, 100, `${sp.pidStart}-bogus`);
+  assert.ok(isAlive(sp.pid), "a mismatched identity is never signalled");
+  // with the real identity the group is killed
+  await killGroup(sp.pid, 100, sp.pidStart);
+  assert.ok(!isAlive(sp.pid));
+});
+
+test("records cannot point reads or deletes outside the task dir", async () => {
+  const dir = taskDir();
+  const victim = join(dir, `victim-${Date.now()}`);
+  writeFileSync(victim, "keep");
+  const id = "forged01";
+  writeFileSync(
+    join(dir, `${id}.status.json`),
+    JSON.stringify({
+      id, label: "forged", command: "x", cwd: "/", owner: "test", pid: 1, status: "completed",
+      startedAt: 0, finishedAt: 0, events: [], notify: false, wake: false, origin: "background",
+      outputPath: victim, exitPath: "/etc/passwd",
+    }),
+  );
+  const t = readTask(id)!;
+  assert.equal(t.outputPath, join(dir, `${id}.output`));
+  assert.equal(t.exitPath, join(dir, `${id}.exit`));
+  cleanupTasks(0, Date.now() + 1000);
+  assert.equal(readFileSync(victim, "utf-8"), "keep", "a forged outputPath is never deleted");
+  rmSync(victim, { force: true });
+});
+
+test("task ids are never paths", () => {
+  for (const bad of ["../../etc/passwd", "a/b", "x.status.json", "..", "A1"]) assert.equal(isValidId(bad), false, bad);
+  assert.equal(readTask("../../etc/passwd"), undefined);
+  assert.equal(readTask("abc/def"), undefined);
+  assert.equal(isValidId(newTaskId()), true);
+});
+
+/** Run `fn` with a different PI_BG_DIR, restoring it afterwards. */
+async function withEnv(key: string, value: string, fn: () => Promise<void> | void) {
+  const prev = process.env[key];
+  process.env[key] = value;
+  try {
+    await fn();
+  } finally {
+    process.env[key] = prev;
+  }
+}

@@ -24,3 +24,11 @@ Initial release. A port of the background-task model from
   count, compact completion card, `/bg` command family.
 - Reload and resume safety: detached tasks are reconciled from their status
   files, and a terminal status is never overwritten by a stale follower.
+- Hardened storage: the task directory is `0700` (files `0600`), a directory
+  created by another user is never used, planted symlinks are removed instead of
+  followed, and a record cannot point a read, delete or signal outside it.
+- Process identity: each task stores its process start time, so a reused pid is
+  never adopted, cancelled or killed by a timeout.
+- Session isolation: `bg output`/`tail`/`wait`/`cancel`/`watch`/`cleanup` stay
+  inside the owning session; `all_sessions: true` opts into another session's
+  task, and a machine-wide `list` marks foreign tasks.

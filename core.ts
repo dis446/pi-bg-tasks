@@ -12,11 +12,13 @@
  *
  * Only Node built-ins here: the unit tests run with plain `node --test`.
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
+  chmodSync,
   closeSync,
-  existsSync,
+  constants,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
@@ -24,7 +26,8 @@ import {
   renameSync,
   rmSync,
   statSync,
-  writeFileSync,
+  unlinkSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +60,8 @@ export interface Task {
   /** pi session id that owns delivery for this task. */
   owner: string;
   pid?: number;
+  /** Process start identity at spawn, so a reused pid is never signalled or adopted. */
+  pidStart?: string;
   status: TaskStatus;
   exitCode?: number;
   error?: string;
@@ -84,11 +89,64 @@ export const CANCEL_GRACE_MS = 400;
 
 // ---------------------------------------------------------------- storage
 
-/** Shared by every pi process on the machine; PI_BG_DIR overrides (tests). */
+/** Shared by every pi process of this user; PI_BG_DIR overrides (tests). */
 export function taskDir(): string {
-  const dir = process.env.PI_BG_DIR || join(tmpdir(), "pi-bg-tasks");
-  mkdirSync(dir, { recursive: true });
-  return dir;
+  const explicit = process.env.PI_BG_DIR;
+  return privateDir(explicit || join(tmpdir(), "pi-bg-tasks"), explicit !== undefined);
+}
+
+/** Set once if the shared path is squatted, so every call agrees on the fallback. */
+let fallbackDir: string | undefined;
+
+/**
+ * The task dir holds command text and output, so it is private to this user:
+ * created 0700, tightened when an older version or a loose umask left it open,
+ * and never used when another user created it first (symlink/plant attacks).
+ */
+function privateDir(preferred: string, explicit: boolean): string {
+  mkdirSync(preferred, { recursive: true, mode: 0o700 });
+  const st = statSync(preferred);
+  const uid = process.getuid?.();
+  if (uid === undefined || st.uid === uid) {
+    if ((st.mode & 0o077) !== 0) {
+      try {
+        chmodSync(preferred, 0o700);
+      } catch {
+        /* tighten below via a private fallback */
+      }
+    }
+    if ((statSync(preferred).mode & 0o077) === 0) return preferred;
+  }
+  if (explicit) throw new Error(`PI_BG_DIR is not private to uid ${uid}: ${preferred}`);
+  // Someone else created the shared path: use a fresh directory we own instead.
+  fallbackDir ??= mkdtempSync(join(tmpdir(), "pi-bg-tasks-"));
+  return fallbackDir;
+}
+
+/** Task ids are file-name fragments, never paths. */
+const TASK_ID = /^[0-9a-z]{1,32}$/;
+export const isValidId = (id: string): boolean => TASK_ID.test(id);
+
+/**
+ * Create or replace a file we own without following a symlink and without
+ * inheriting another file's mode: O_EXCL refuses an existing entry, so a
+ * planted link is removed instead of written through.
+ */
+function writePrivate(path: string, data: string): void {
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+  let fd: number;
+  try {
+    fd = openSync(path, flags, 0o600);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    unlinkSync(path); // a stale file or a planted symlink: drop the entry, keep the target
+    fd = openSync(path, flags, 0o600);
+  }
+  try {
+    writeSync(fd, data);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export const statusPath = (id: string): string => join(taskDir(), `${id}.status.json`);
@@ -112,7 +170,7 @@ export function writeTask(task: Task): boolean {
   const cur = readTask(task.id);
   if (cur && cur.status !== "running" && (task.status === "running" || task.finishedAt !== cur.finishedAt)) return false;
   const tmp = `${p}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(task, null, 2));
+  writePrivate(tmp, JSON.stringify(task, null, 2));
   renameSync(tmp, p);
   return true;
 }
@@ -128,11 +186,24 @@ export function markDelivered(id: string): void {
 }
 
 export function readTask(id: string): Task | undefined {
+  if (!isValidId(id)) return undefined; // ids index the directory, they never address paths
+  let t: Task;
   try {
-    return JSON.parse(readFileSync(statusPath(id), "utf-8")) as Task;
+    // `__proto__` in a record must stay a key, not become the object's prototype
+    const raw = readFileSync(statusPath(id), "utf-8");
+    t = JSON.parse(raw, (k, v) => (k === "__proto__" ? undefined : v)) as Task;
   } catch {
     return undefined;
   }
+  if (!t || typeof t !== "object") return undefined;
+  // Records are data, not commands: paths are derived from the id on every read,
+  // so a record can never point reads, deletes or signals outside this directory.
+  t.id = id;
+  t.outputPath = join(taskDir(), `${id}.output`);
+  t.exitPath = join(taskDir(), `${id}.exit`);
+  if (!Number.isInteger(t.pid) || (t.pid as number) <= 0) delete t.pid;
+  if (typeof t.pidStart !== "string") delete t.pidStart;
+  return t;
 }
 
 export function listTasks(owner?: string): Task[] {
@@ -145,10 +216,10 @@ export function listTasks(owner?: string): Task[] {
   return out.sort((a, b) => b.startedAt - a.startedAt);
 }
 
-/** Remove terminal task files older than maxAgeHours; running tasks are skipped. */
-export function cleanupTasks(maxAgeHours = 24, now = Date.now()): string[] {
+/** Remove terminal task files older than maxAgeHours; running tasks are skipped. `owner` limits the sweep. */
+export function cleanupTasks(maxAgeHours = 24, now = Date.now(), owner?: string): string[] {
   const removed: string[] = [];
-  for (const t of listTasks()) {
+  for (const t of listTasks(owner)) {
     if (t.status === "running") continue;
     if (now - (t.finishedAt ?? t.startedAt) < maxAgeHours * 3_600_000) continue;
     for (const p of [statusPath(t.id), t.outputPath, t.exitPath, cmdPath(t.id)]) rmSync(p, { force: true });
@@ -177,6 +248,8 @@ exit $ec`;
 export interface Spawned {
   id: string;
   pid: number;
+  /** Process start identity; compared before any signal so a reused pid is left alone. */
+  pidStart?: string;
   child: ChildProcess;
   outputPath: string;
   exitPath: string;
@@ -193,8 +266,8 @@ export function spawnProcess(opts: {
   const dir = taskDir();
   const outputPath = join(dir, `${id}.output`);
   const exitPath = join(dir, `${id}.exit`);
-  writeFileSync(outputPath, "");
-  writeFileSync(cmdPath(id), opts.command);
+  writePrivate(outputPath, "");
+  writePrivate(cmdPath(id), opts.command);
   const child = spawn("bash", ["-c", WRAPPER], {
     cwd: opts.cwd,
     detached: true,
@@ -203,7 +276,38 @@ export function spawnProcess(opts: {
   });
   if (child.pid === undefined) throw new Error(`failed to spawn bash for: ${opts.command}`);
   child.on("error", () => {}); // surfaced through the missing exit file instead
-  return { id, pid: child.pid, child, outputPath, exitPath };
+  return { id, pid: child.pid, pidStart: processStartId(child.pid), child, outputPath, exitPath };
+}
+
+/**
+ * Start identity of a live process: /proc starttime on Linux, `ps -o lstart`
+ * elsewhere. A pid plus this value names one process, across pid reuse.
+ */
+export function processStartId(pid: number): string | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf-8");
+    // field 22 (starttime); fields 3.. follow the last ")\n", so index 19 is field 22
+    const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+    if (start) return `linux:${start}`;
+  } catch {
+    /* not Linux */
+  }
+  try {
+    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return out ? `ps:${out}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The task's own process, not a stranger that inherited its pid. */
+export function isOurProcess(pid: number | undefined, pidStart?: string): boolean {
+  if (!pid || !isAlive(pid)) return false;
+  if (!pidStart) return true; // record predates identity tracking
+  return processStartId(pid) === pidStart;
 }
 
 export function isAlive(pid: number | undefined): boolean {
@@ -216,10 +320,11 @@ export function isAlive(pid: number | undefined): boolean {
   }
 }
 
-/** TERM the whole group, KILL it after the grace period. */
-export async function killGroup(pid: number | undefined, graceMs = CANCEL_GRACE_MS): Promise<void> {
+/** TERM the whole group, KILL it after the grace period. Never signals a reused pid. */
+export async function killGroup(pid: number | undefined, graceMs = CANCEL_GRACE_MS, pidStart?: string): Promise<void> {
   if (!pid) return;
   const sig = (s: NodeJS.Signals) => {
+    if (!isOurProcess(pid, pidStart)) return;
     try {
       process.kill(-pid, s);
     } catch {
@@ -228,7 +333,7 @@ export async function killGroup(pid: number | undefined, graceMs = CANCEL_GRACE_
   };
   sig("SIGTERM");
   const deadline = Date.now() + graceMs;
-  while (Date.now() < deadline && isAlive(pid)) await sleep(25);
+  while (Date.now() < deadline && isOurProcess(pid, pidStart)) await sleep(25);
   sig("SIGKILL");
 }
 
@@ -434,12 +539,12 @@ export async function advance(task: Task, st: FollowState, now = Date.now()): Pr
   const code = readExitCode(task.exitPath);
   if (code !== undefined) {
     finish(task, code === 0 ? "completed" : "failed", now, { exitCode: code, error: code === 0 ? undefined : `exit code ${code}` });
-  } else if (!isAlive(task.pid)) {
+  } else if (!isOurProcess(task.pid, task.pidStart)) {
     finish(task, "failed", now, { error: "process exited without recording a status (killed or interrupted)" });
   } else if (task.timeoutSec && now - task.startedAt >= task.timeoutSec * 1000) {
     // record the verdict before signalling, so a concurrent follower cannot call it "killed"
     finish(task, "failed", now, { exitCode: 124, error: `timed out after ${task.timeoutSec}s` });
-    if (writeTask(task)) await killGroup(task.pid);
+    if (writeTask(task)) await killGroup(task.pid, CANCEL_GRACE_MS, task.pidStart);
     else Object.assign(task, readTask(task.id));
     return { ...r, changed: true, finished: true };
   } else if (task.stallWakeSeconds && !st.stallFired && now - st.lastActivityAt >= task.stallWakeSeconds * 1000) {
@@ -475,7 +580,7 @@ export async function cancelTask(task: Task): Promise<Task> {
     finish(task, "failed", Date.now(), { error: "Cancelled by user" });
     task.delivered = true; // cancellation publishes no completion event
     writeTask(task);
-    await killGroup(task.pid);
+    await killGroup(task.pid, CANCEL_GRACE_MS, task.pidStart);
   }
   return task;
 }
