@@ -22,6 +22,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       # ci, not install: the lockfile is the only source of truth for versions.
-      - run: npm ci --no-audit --no-fund
+      # --ignore-scripts: no transitive install script runs in CI.
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck
       - run: npm test

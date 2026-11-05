@@ -199,6 +199,7 @@ status but publishes no completion event — check `bg status` instead.
 | --- | --- |
 | `PI_BG_AUTO_MS` | Foreground handoff budget in ms. Default `3000`; `0` disables auto-handoff. |
 | `PI_BG_DIR` | Task directory. Default `$TMPDIR/pi-bg-tasks`. Must be private to your user; it is created `0700` and tightened if it is not. |
+| `PI_BG_MAX_OUTPUT_BYTES` | Cap on one task's output file (default 64 MiB, minimum 64 KiB). Past it the file keeps its last 1 MiB and a truncation notice. |
 
 The factory also takes options when you wrap it yourself:
 
@@ -254,7 +255,8 @@ tool call ──► spawn (detached, own process group)
   machine.
 - `alt+shift+b` needs the Kitty keyboard protocol end to end; use `/bg handoff`
   when a terminal or multiplexer does not forward it.
-- Output files are not trimmed by the extension; `bg cleanup` removes old ones.
+- Output files keep the last 1 MiB once they pass `PI_BG_MAX_OUTPUT_BYTES`
+  (64 MiB); `bg cleanup` removes the rest.
 
 ## Development
 
@@ -293,8 +295,12 @@ pi's package docs require; they are never installed or bundled, so they add no
 supply-chain surface. `npm ci` is the only supported way to install them here.
 
 Releases are cut by pushing a `v<version>` tag: `.github/workflows/release.yml`
-re-runs `npm run ci`, checks that the tag matches `package.json`, and publishes
-with provenance (`--provenance --access public`) using an `NPM_TOKEN` secret.
+re-runs `npm run ci`, checks that the tag matches `package.json` and is an
+ancestor of `main`, then publishes with provenance (`--provenance`,
+`--access public`). Both workflows install with `npm ci --ignore-scripts`, so no
+dependency install script runs next to a publish credential. The publish step
+prefers npm **Trusted Publishing** (OIDC, no secret); it falls back to an
+`NPM_TOKEN` secret when one exists.
 
 ## Security
 
@@ -322,10 +328,18 @@ assumption that it can be hostile:
   and evaluates no code beyond the commands you ask for. The check text of a
   `wait_for` poller travels in the environment, never interpolated into a shell
   string.
+- **Bounded state.** One output file cannot exceed its cap, a command that never
+  emits a newline cannot grow the follower's buffer, and a status record larger
+  than 256 KiB is ignored.
+- **Terminal safety.** Control characters and escape sequences are stripped
+  from labels, progress messages and rendered output, so a command cannot
+  repaint the card, the transcript or the window title.
 
 Residual: a task's output reaches the model verbatim (it is command output), and
-`process.env` is passed to every task, as pi's own `bash` does. Keep secrets out
-of command text you do not want on disk in your own task directory.
+`process.env` is passed to every task, as pi's own `bash` does — a detached task
+keeps those variables after pi exits. Keep secrets out of command text you do
+not want on disk in your own task directory. A `wait_for` check travels in
+`PI_WAIT_CHECK`, which same-uid processes can read from `/proc/<pid>/environ`.
 
 ## Credits
 

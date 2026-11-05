@@ -32,3 +32,11 @@ Initial release. A port of the background-task model from
 - Session isolation: `bg output`/`tail`/`wait`/`cancel`/`watch`/`cleanup` stay
   inside the owning session; `all_sessions: true` opts into another session's
   task, and a machine-wide `list` marks foreign tasks.
+- Bounded state: an output file keeps its tail past `PI_BG_MAX_OUTPUT_BYTES`
+  (64 MiB default), the follower's unterminated-line buffer is capped at 8 KiB,
+  and a status record over 256 KiB is ignored.
+- Terminal safety: control characters and escape sequences are stripped from
+  labels, progress messages and rendered output.
+- Release hardening: both workflows install with `npm ci --ignore-scripts`; the
+  release job requires a tag that matches `package.json` and is an ancestor of
+  `main`, and prefers npm Trusted Publishing over a stored token.

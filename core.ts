@@ -17,6 +17,7 @@ import {
   chmodSync,
   closeSync,
   constants,
+  ftruncateSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -86,6 +87,17 @@ export interface Task {
 export const MAX_EVENTS = 50;
 export const MIN_STALL_SECONDS = 30;
 export const CANCEL_GRACE_MS = 400;
+/** Longest single unterminated line kept between follower passes. */
+export const PARTIAL_MAX = 8 * 1024;
+/** Above this, a task file keeps only its tail. PI_BG_MAX_OUTPUT_BYTES overrides. */
+export function outputCapBytes(): number {
+  const n = Number(process.env.PI_BG_MAX_OUTPUT_BYTES);
+  return Number.isFinite(n) && n >= 64 * 1024 ? n : 64 * 1024 * 1024;
+}
+/** Bytes kept when an output file is capped. */
+export const OUTPUT_KEEP_BYTES = 1024 * 1024;
+/** Largest status record accepted from disk. */
+export const STATUS_MAX_BYTES = 256 * 1024;
 
 // ---------------------------------------------------------------- storage
 
@@ -187,10 +199,12 @@ export function markDelivered(id: string): void {
 
 export function readTask(id: string): Task | undefined {
   if (!isValidId(id)) return undefined; // ids index the directory, they never address paths
+  const p = statusPath(id);
   let t: Task;
   try {
-    // `__proto__` in a record must stay a key, not become the object's prototype
-    const raw = readFileSync(statusPath(id), "utf-8");
+    // A record is data, not a command: bounded in size, `__proto__` stays a key.
+    if (statSync(p).size > STATUS_MAX_BYTES) return undefined;
+    const raw = readFileSync(p, "utf-8");
     t = JSON.parse(raw, (k, v) => (k === "__proto__" ? undefined : v)) as Task;
   } catch {
     return undefined;
@@ -367,6 +381,34 @@ export function tailFile(path: string, maxBytes = 64 * 1024): { text: string; si
   return { text, size };
 }
 
+/**
+ * Keep only the tail of an oversized output file. In place, because the task
+ * still writes through its own O_APPEND descriptor: the next write lands at the
+ * new end of file, so nothing is lost for good.
+ * shortcut: a concurrent append during the rewrite can be cut, at most one
+ * monitor tick's worth; upgrade to a capping writer process if that matters.
+ */
+export function capOutput(path: string, size: number, cap = outputCapBytes()): boolean {
+  if (size <= cap) return false;
+  const keep = Math.min(size, OUTPUT_KEEP_BYTES);
+  const start = size - keep;
+  const buf = Buffer.alloc(keep);
+  const notice = Buffer.from(`\n[pi-bg-tasks: output passed ${cap} bytes; older output dropped, tail kept]\n`);
+  const fd = openSync(path, "r+");
+  try {
+    readSync(fd, buf, 0, keep, start);
+    let text = buf.toString("utf-8");
+    text = text.slice(text.indexOf("\n") + 1); // drop the partial first line
+    const body = Buffer.from(text, "utf-8");
+    writeSync(fd, notice, 0, notice.length, 0);
+    writeSync(fd, body, 0, body.length, notice.length);
+    ftruncateSync(fd, notice.length + body.length);
+  } finally {
+    closeSync(fd);
+  }
+  return true;
+}
+
 export function tailLines(text: string, n: number): string {
   const lines = text.replace(/\n$/, "").split("\n");
   return lines.slice(-n).join("\n");
@@ -505,6 +547,8 @@ export async function advance(task: Task, st: FollowState, now = Date.now()): Pr
     /* missing output file: treated below via liveness */
   }
   if (size > st.offset) {
+    // cap before reading: a runaway command must not fill the disk
+    if (capOutput(task.outputPath, size)) st.offset = 0;
     const len = Math.min(size - st.offset, 1024 * 1024);
     const buf = Buffer.alloc(len);
     const fd = openSync(task.outputPath, "r");
@@ -518,6 +562,8 @@ export async function advance(task: Task, st: FollowState, now = Date.now()): Pr
     st.stallFired = false;
     const lines = (st.partial + buf.toString("utf-8")).split("\n");
     st.partial = lines.pop() ?? "";
+    // a command that never emits a newline must not grow pi's heap
+    if (st.partial.length > PARTIAL_MAX) st.partial = st.partial.slice(-PARTIAL_MAX);
     for (const line of lines) {
       const u = parseProgressLine(line);
       if (!u) continue;
@@ -646,6 +692,17 @@ export async function waitTasks(ids: string[], o: WaitOptions = {}): Promise<Wai
 
 // ---------------------------------------------------------------- text
 
+/** Control characters and escape sequences never reach the terminal. */
+export function stripControl(s: string): string {
+  return s
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, "") // OSC (window title, hyperlinks)
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "") // CSI (colors, cursor, erase)
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ""); // remaining C0 and DEL
+}
+
 export function fmtDuration(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
   if (s < 60) return `${s}s`;
@@ -656,10 +713,12 @@ export function fmtDuration(ms: number): string {
 
 export function describeTask(t: Task, now = Date.now()): string {
   const dur = fmtDuration((t.finishedAt ?? now) - t.startedAt);
-  const prog = t.progress ? ` · ${t.progress.percent !== undefined ? `${t.progress.percent}%` : ""}${t.progress.message ? ` ${t.progress.message}` : ""}` : "";
+  const prog = t.progress
+    ? ` · ${t.progress.percent !== undefined ? `${t.progress.percent}%` : ""}${t.progress.message ? ` ${stripControl(t.progress.message)}` : ""}`
+    : "";
   const exit = t.exitCode !== undefined ? ` · exit ${t.exitCode}` : "";
-  const err = t.error && t.status === "failed" ? ` · ${t.error}` : "";
-  return `${t.id}\t${t.status}\t${t.label}\t${dur}${exit}${err}${prog}`;
+  const err = t.error && t.status === "failed" ? ` · ${stripControl(t.error)}` : "";
+  return `${t.id}\t${t.status}\t${stripControl(t.label)}\t${dur}${exit}${err}${prog}`;
 }
 
 /** Explicit progress/checkpoint markers are plumbing; they never reach the model. */
@@ -672,7 +731,7 @@ export function stripProgressMarkers(text: string): string {
 
 /** Message for the model when a task finishes: status, 500-char output preview, file path. */
 export function completionText(t: Task): string {
-  const preview = stripProgressMarkers(tailFile(t.outputPath, 4096).text).trim();
+  const preview = stripControl(stripProgressMarkers(tailFile(t.outputPath, 4096).text)).trim();
   const short = preview.length > 500 ? `…${preview.slice(-500)}` : preview;
   const head =
     t.status === "completed"
@@ -700,10 +759,10 @@ export const SUCCESS_LINGER_MS = 12_000;
 export function rowFromTask(t: Task, now = Date.now()): Row {
   return {
     id: t.id,
-    label: t.label,
+    label: stripControl(t.label),
     state: t.status,
     percent: t.progress?.percent,
-    message: t.progress?.message,
+    message: t.progress?.message === undefined ? undefined : stripControl(t.progress.message),
     startedAt: t.startedAt,
     finishedAt: t.finishedAt,
     updatedAt: t.finishedAt ?? t.events.at(-1)?.at ?? t.startedAt ?? now,

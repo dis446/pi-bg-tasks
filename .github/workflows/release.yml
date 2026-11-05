@@ -7,22 +7,26 @@ on:
 
 permissions:
   contents: read
-  id-token: write # npm provenance
+  id-token: write # npm provenance / trusted publishing
 
 jobs:
   publish:
+    # A manual run must still come from a tag, never from a branch.
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4.0.4
         with:
           node-version: 24
           cache: npm
           registry-url: https://registry.npmjs.org
-      - run: npm ci --no-audit --no-fund
+      # --ignore-scripts: no dependency install script runs with publish rights.
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run ci
-      # Guard: the tag must match the version being published.
-      - name: Tag matches package version
+      - name: Tag matches package version and is on main
         run: |
           tag="${GITHUB_REF_NAME#v}"
           version="$(node -p "require('./package.json').version")"
@@ -30,6 +34,16 @@ jobs:
             echo "tag $GITHUB_REF_NAME does not match version $version" >&2
             exit 1
           fi
-      - run: npm publish --provenance --access public
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "$GITHUB_REF_NAME is not an ancestor of main" >&2
+            exit 1
+          fi
+      # Preferred: Trusted Publishing (OIDC), no long-lived token in the repo.
+      - if: ${{ secrets.NPM_TOKEN == '' }}
+        run: npm publish --provenance --access public
+      # Fallback for repositories that still hold an automation token.
+      - if: ${{ secrets.NPM_TOKEN != '' }}
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

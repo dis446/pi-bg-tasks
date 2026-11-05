@@ -13,7 +13,7 @@ const core = await import("../core.ts");
 const {
   advance, bar, cancelTask, cleanupTasks, cmdPath, isAlive, isValidId, killGroup, listTasks, markDelivered, mergeProgress,
   newFollowState, newTaskId, normalizeProgress, parseProgressLine, processStartId, readTask, renderCard, retainRows,
-  rowFromTask, settle, sleep, spawnProcess, taskDir, waitTasks, writeTask,
+  describeTask, rowFromTask, settle, sleep, spawnProcess, stripControl, taskDir, waitTasks, writeTask,
 } = core;
 type Task = import("../core.ts").Task;
 
@@ -408,3 +408,44 @@ async function withEnv(key: string, value: string, fn: () => Promise<void> | voi
     process.env[key] = prev;
   }
 }
+
+test("a command with no newline cannot grow the partial buffer", async () => {
+  const t = mkTask("printf 'x%.0s' $(seq 1 200000)"); // 200 KB, one line
+  const st = newFollowState(t);
+  await runToEnd(t, 20_000);
+  assert.equal(t.status, "completed");
+  assert.ok(st.partial.length <= 8192, `partial buffer bounded (${st.partial.length})`);
+});
+
+test("an oversized output file keeps only its tail", async () => {
+  await withEnv("PI_BG_MAX_OUTPUT_BYTES", "65536", async () => {
+    const t = mkTask("seq 1 400000"); // ~2.6 MB
+    const st = newFollowState(t);
+    await runToEnd(t, 30_000);
+    assert.equal(t.status, "completed");
+    assert.ok(statSync(t.outputPath).size < 1.5 * 1024 * 1024, `output capped (${statSync(t.outputPath).size})`);
+    const text = readFileSync(t.outputPath, "utf-8");
+    assert.match(text, /output passed 65536 bytes; older output dropped/);
+    assert.match(text, /\n400000\n?$/, "the tail survived");
+  });
+});
+
+test("an oversized status record is ignored", () => {
+  const id = "bigrec01";
+  const t: Task = {
+    id, label: "x", command: "x", cwd: "/", owner: "test", status: "completed", startedAt: 0, finishedAt: 0,
+    events: [], notify: false, wake: false, origin: "background",
+    outputPath: join(taskDir(), `${id}.output`), exitPath: join(taskDir(), `${id}.exit`),
+  };
+  writeFileSync(join(taskDir(), `${id}.status.json`), JSON.stringify({ ...t, error: "x".repeat(300 * 1024) }));
+  assert.equal(readTask(id), undefined);
+});
+
+test("escape sequences are stripped before text reaches the terminal", () => {
+  assert.equal(stripControl("a\u001b[31mb\u001b[0m\u0007c"), "abc");
+  assert.equal(stripControl("\u001b]0;title\u0007ok"), "ok");
+  assert.equal(stripControl("plain\ttext\nnext"), "plain\ttext\nnext", "tabs and newlines are text");
+  const t = { id: "x", label: "\u001b[2Jwiped", status: "running", startedAt: 0, events: [] } as unknown as Task;
+  assert.equal(rowFromTask(t, 0).label, "wiped");
+  assert.match(describeTask({ ...t, progress: { kind: "determinate", message: "\u001b[31mred" } } as Task, 0), /red$/);
+});

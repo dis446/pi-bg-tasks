@@ -37,6 +37,7 @@ import {
   rowFromTask,
   settle,
   sleep,
+  stripControl,
   stripProgressMarkers,
   spawnProcess,
   tailFile,
@@ -95,7 +96,7 @@ export function createBgTasks(opts: BgOptions = {}) {
     const deliver = (t: Task, kind: "completion" | "stall") => {
       const text =
         kind === "stall"
-          ? `Background task ${t.id} (${t.label}) has produced no output for ${t.stallWakeSeconds}s. It is still running; check it with bg tail, or cancel it.\nOutput: ${t.outputPath}`
+          ? `Background task ${t.id} (${stripControl(t.label)}) has produced no output for ${t.stallWakeSeconds}s. It is still running; check it with bg tail, or cancel it.\nOutput: ${t.outputPath}`
           : stripMarkers(completionText(t));
       if (shuttingDown) return; // the next incarnation of this session delivers it
       if (kind === "completion") markDelivered(t.id);
@@ -310,17 +311,19 @@ export function createBgTasks(opts: BgOptions = {}) {
       const d = message.details as { task?: Task; kind?: string } | undefined;
       const t = d?.task;
       if (!t) return new Text(String(message.content), 0, 0);
+      // task labels and output are command text: escape sequences never reach the terminal
+      const label = stripControl(t.label);
       const dur = fmtDuration((t.finishedAt ?? Date.now()) - t.startedAt);
       if (d?.kind === "stall")
-        return new Text(theme.fg("warning", "⚠ ") + theme.fg("text", t.label) + theme.fg("dim", ` · stalled · ${t.id}`), 0, 0);
+        return new Text(theme.fg("warning", "⚠ ") + theme.fg("text", label) + theme.fg("dim", ` · stalled · ${t.id}`), 0, 0);
       if (t.status === "completed" && !expanded)
-        return new Text(theme.fg("success", "✓ ") + theme.fg("text", t.label) + theme.fg("dim", ` · ${dur} · ${t.id}`), 0, 0);
+        return new Text(theme.fg("success", "✓ ") + theme.fg("text", label) + theme.fg("dim", ` · ${dur} · ${t.id}`), 0, 0);
       const head =
         (t.status === "completed" ? theme.fg("success", "✓ ") : theme.fg("error", "× ")) +
-        theme.fg("text", t.label) +
+        theme.fg("text", label) +
         theme.fg("dim", ` · ${t.exitCode !== undefined ? `exit ${t.exitCode} · ` : ""}${dur} · ${t.id}`);
-      const err = t.error && t.status === "failed" ? `\n${theme.fg("error", t.error)}` : "";
-      const tail = stripMarkers(tailLines(tailFile(t.outputPath, 8192).text, expanded ? 40 : 6)).trim();
+      const err = t.error && t.status === "failed" ? `\n${theme.fg("error", stripControl(t.error))}` : "";
+      const tail = stripControl(stripMarkers(tailLines(tailFile(t.outputPath, 8192).text, expanded ? 40 : 6))).trim();
       return new Text(`${head}${err}${tail ? `\n${theme.fg("dim", tail)}` : ""}`, 0, 0);
     });
 
