@@ -21,7 +21,8 @@ Initial release. A port of the background-task model from
 - Delivery: notify queues for the next turn, wake starts or steers a turn,
   stall watchdog for silent tasks.
 - TUI: `⏳ Background` card with progress bars and retention rules, footer
-  count, compact completion card, `/bg` command family.
+  count, compact completion card, `/bg` command family. Bars use block glyphs
+  (`█ ▌ ░`), which stay legible in fonts where heavy and light rules look alike.
 - Reload and resume safety: detached tasks are reconciled from their status
   files, and a terminal status is never overwritten by a stale follower.
 - Hardened storage: the task directory is `0700` (files `0600`), a directory

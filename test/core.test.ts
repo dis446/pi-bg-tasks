@@ -90,9 +90,9 @@ test("phase-only update keeps the last percentage", () => {
 // ------------------------------------------------------------ card
 
 test("bar and card rendering", () => {
-  assert.equal(bar(0), "──────");
-  assert.equal(bar(100), "━━━━━━");
-  assert.equal(bar(42), "━━╺───");
+  assert.equal(bar(0), "░░░░░░");
+  assert.equal(bar(100), "██████");
+  assert.equal(bar(42), "██▌░░░");
   const fg = (_c: string, s: string) => s;
   const now = Date.now();
   const rows = [
@@ -102,8 +102,8 @@ test("bar and card rendering", () => {
   ];
   const lines = renderCard(rows, fg, now);
   assert.equal(lines[0], "⏳ Background · 1 running");
-  assert.match(lines[1], /^◌ cargo test {2}━━╺─── {2}42%/);
-  assert.match(lines[2], /^✓ cargo build {2}━━━━━━ 100%/);
+  assert.match(lines[1], /^◌ cargo test {2}██▌░░░ {2}42%/);
+  assert.match(lines[2], /^✓ cargo build {2}██████ 100%/);
   assert.match(lines[3], /^× lint {2}failed/);
   const many = Array.from({ length: 8 }, (_, i) => ({ ...rows[0], id: `r${i}`, label: `t${i}` }));
   const l2 = renderCard(many, fg, now);

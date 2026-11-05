@@ -13,8 +13,8 @@ told when it is done.
 
 ```text
 ⏳ Background · 1 running
-◌ cargo test  ━━━╺──  42%  running integration tests
-✓ cargo build  ━━━━━━ 100%
+◌ cargo test  ██▌░░░  42%  running integration tests
+✓ cargo build  ██████ 100%
 ```
 
 ## Features

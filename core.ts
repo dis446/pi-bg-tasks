@@ -783,7 +783,7 @@ export function bar(percent: number, cells = 6): string {
   const exact = (Math.min(100, Math.max(0, percent)) / 100) * cells;
   const full = Math.floor(exact);
   const half = exact - full >= 0.5 && full < cells ? 1 : 0;
-  return "━".repeat(full) + "╺".repeat(half) + "─".repeat(cells - full - half);
+  return "█".repeat(full) + "▌".repeat(half) + "░".repeat(cells - full - half);
 }
 
 export type Fg = (color: "accent" | "success" | "error" | "muted" | "dim" | "text" | "warning", text: string) => string;

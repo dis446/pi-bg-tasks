@@ -106,7 +106,7 @@ test("background bash: card, footer, completion delivery, no double run", async 
   assert.match(msg!.msg.content, /Full output: /);
   assert.equal(h.notices.pop()!.includes("done"), true);
   await until(() => h.statuses.get("bg-tasks") === undefined);
-  assert.match(h.cardLines()[1], /^✓ echo out; sleep 0\.4 {2}━━━━━━ 100%/);
+  assert.match(h.cardLines()[1], /^✓ echo out; sleep 0\.4 {2}██████ 100%/);
 });
 
 test("background bash failures stay in the card and report the exit code", async () => {
