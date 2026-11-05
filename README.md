@@ -3,6 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@dis446/pi-bg-tasks.svg)](https://www.npmjs.com/package/@dis446/pi-bg-tasks)
 [![Node](https://img.shields.io/node/v/@dis446/pi-bg-tasks.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![test](https://github.com/dis446/pi-bg-tasks/actions/workflows/test.yml/badge.svg)](https://github.com/dis446/pi-bg-tasks/actions/workflows/test.yml)
 
 Background tasks for [pi](https://github.com/earendil-works/pi). Long-running
 commands keep running after the tool call returns, report progress into a live
