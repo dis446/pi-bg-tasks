@@ -34,18 +34,18 @@ FG = {
     "warning": (214, 178, 122),
 }
 
-# A real moment from the demo run: two finished, one at 90 %, one elapsed.
+# A real moment from the demo clip (t≈32 s): two bars mid-flight, one finished.
 ROWS = [
-    {"id": "753xo9k8", "label": "# release build · cargo build --release", "state": "running",
-     "percent": 90, "message": "compiling crate 36/40", "startedAt": 0, "updatedAt": 4000},
-    {"id": "74aypjol", "label": "# test suite · node --test test/*.test.ts", "state": "completed",
-     "percent": 100, "startedAt": 0, "finishedAt": 31000, "updatedAt": 3000},
-    {"id": "74azauqn", "label": "# e2e · playwright test --project=chromium --shard=1/3", "state": "completed",
-     "percent": 100, "startedAt": 0, "finishedAt": 30000, "updatedAt": 2000},
-    {"id": "74az2dk5", "label": "# dev server · next dev on :3000", "state": "running",
+    {"id": "8lvvkabw", "label": "# release build · cargo build", "state": "running",
+     "percent": 41, "message": "compiling 41/100", "startedAt": 0, "updatedAt": 4000},
+    {"id": "8lvw1xri", "label": "# e2e · playwright test", "state": "running",
+     "percent": 35, "message": "spec 21/60", "startedAt": 0, "updatedAt": 3000},
+    {"id": "8lvvuxno", "label": "# test suite · node --test", "state": "completed",
+     "percent": 100, "startedAt": 0, "finishedAt": 30_000, "updatedAt": 2000},
+    {"id": "8lvw9y1c", "label": "# dev server · next dev", "state": "running",
      "startedAt": 0, "updatedAt": 1000},
 ]
-NOW = 36_000  # elapsed clock for the dev server row
+NOW = 40_000  # elapsed clock for the dev server row
 
 
 def render_lines() -> list[str]:
