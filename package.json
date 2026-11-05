@@ -34,7 +34,8 @@
   "files": [
     "core.ts",
     "index.ts",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
   "pi": {
     "extensions": [

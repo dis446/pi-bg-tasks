@@ -546,3 +546,15 @@ test("bg rejects a task id that is a path", async () => {
   const many = await run(bg, { action: "status", task_ids: ["ok1", "../x"] }, h.ctx);
   assert.match(many.content[0].text, /invalid task id/);
 });
+
+test("/bg doctor reports the task dir, its mode and the running counts", async () => {
+  const h = harness();
+  await start(h);
+  await h.commands.get("bg").handler("doctor", h.ctx);
+  const text = h.notices.pop()!;
+  assert.match(text, /task dir: \/tmp\/pi-bg-ext-/);
+  assert.match(text, /mode 700/);
+  assert.match(text, /tasks: \d+ on this machine, \d+ in this session/);
+  assert.match(text, /auto-handoff: 80ms in tui/);
+  assert.match(text, new RegExp(`node ${process.version.replace(/\./g, "\\.")}`));
+});

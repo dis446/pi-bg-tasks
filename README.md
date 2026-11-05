@@ -1,5 +1,9 @@
 # pi-bg-tasks
 
+[![npm version](https://img.shields.io/npm/v/@dis446/pi-bg-tasks.svg)](https://www.npmjs.com/package/@dis446/pi-bg-tasks)
+[![Node](https://img.shields.io/node/v/@dis446/pi-bg-tasks.svg)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
 Background tasks for [pi](https://github.com/earendil-works/pi). Long-running
 commands keep running after the tool call returns, report progress into a live
 task card, and wake the session when they finish.
@@ -55,6 +59,30 @@ pi install ./pi-bg-tasks           # local directory
 
 The extension overrides pi's built-in `bash` tool and adds `bg` and `wait_for`.
 Nothing else is required — no build step, no external dependency.
+
+## Try this first
+
+You do not need to learn the tools or the slash commands. After installing, ask
+pi in plain language:
+
+```text
+Run the test suite in the background and tell me when it finishes.
+```
+
+```text
+Start the dev server in the background, then fix the failing auth test.
+```
+
+```text
+Wait for the uat rollout to finish, then run the smoke tests.
+```
+
+```text
+What is still running? Show me the tail of the build output.
+```
+
+Pi decides whether to call `bash` with `run_in_background`, `bg` or `wait_for`.
+The card appears once something is running.
 
 ## Usage
 
@@ -187,8 +215,8 @@ status but publishes no completion event — check `bg status` instead.
   out, running rows always stay. Most recently active first, up to six rows plus
   `+N more`.
 - Footer shows `⏳ N bg` while anything runs.
-- `/bg` toggles the card; `/bg list`, `/bg handoff`, `/bg cancel <id>`,
-  `/bg clear` do the obvious things.
+- `/bg` toggles the card; `/bg list`, `/bg doctor`, `/bg handoff`,
+  `/bg cancel <id>`, `/bg clear` do the obvious things.
 - `/bg handoff` (or `alt+shift+b` where the terminal and any multiplexer forward
   the Kitty keyboard protocol) backgrounds the command running in the
   foreground.
@@ -258,6 +286,30 @@ tool call ──► spawn (detached, own process group)
 - Output files keep the last 1 MiB once they pass `PI_BG_MAX_OUTPUT_BYTES`
   (64 MiB); `bg cleanup` removes the rest.
 
+## If something feels off
+
+```
+/bg doctor
+```
+
+Prints the task directory and its mode, the task counts for this machine and
+this session, the handoff budget, the output cap and the Node version — the
+handful of facts a bug report needs. `pi list` shows whether the package is
+installed; a `pi update --extensions` upgrade is picked up on the next start or
+`/reload`.
+
+Things that surprise people, and why:
+
+- A command that ran past the handoff budget keeps running and shows a task id.
+  Do not rerun it; use `bg wait` or `bash` is already returning its output.
+- Tasks live under `$TMPDIR`, so a reboot forgets them and `bg cleanup` collects
+  the files of finished ones.
+- `bg list` shows tasks from other pi sessions on the machine, marked
+  `other session`; their output stays unreadable unless you pass
+  `all_sessions: true`.
+- Auto-handoff applies to interactive sessions only: a `-p`/`--mode json` run
+  would exit and orphan the task.
+
 ## Development
 
 ```bash
@@ -280,7 +332,8 @@ host packages to the copy inside your own pi installation.
   inside a bundle rather than a flat `node_modules`.
 
 CI (`.github/workflows/test.yml`) runs `npm ci`, `npm run typecheck` and
-`npm test` on Node 22.19 and 24.
+`npm test` on Node 22.19 and 24. Releases are described below; the changelog is
+[CHANGELOG.md](./CHANGELOG.md).
 
 `tsconfig.json` is check-only (`noEmit`): pi loads the `.ts` sources directly, so
 nothing is built. Types resolve from the devDependency copies of the host

@@ -18,6 +18,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { delimiter, join } from "node:path";
+import { statSync } from "node:fs";
 import {
   advance,
   cancelTask,
@@ -31,6 +32,7 @@ import {
   MIN_STALL_SECONDS,
   newFollowState,
   newTaskId,
+  outputCapBytes,
   readTask,
   renderCard,
   retainRows,
@@ -42,6 +44,7 @@ import {
   spawnProcess,
   tailFile,
   tailLines,
+  taskDir,
   waitTasks,
   writeTask,
   type FollowState,
@@ -267,7 +270,7 @@ export function createBgTasks(opts: BgOptions = {}) {
     });
 
     pi.registerCommand("bg", {
-      description: "Background tasks: /bg (toggle card) · /bg list · /bg handoff · /bg cancel <id> · /bg clear",
+      description: "Background tasks: /bg (toggle card) · /bg list · /bg doctor · /bg handoff · /bg cancel <id> · /bg clear",
       handler: async (args, ctx) => {
         const [sub, id] = args.trim().split(/\s+/);
         if (sub === "handoff") {
@@ -287,6 +290,25 @@ export function createBgTasks(opts: BgOptions = {}) {
           const ts = await Promise.all(listTasks(owner).map((t) => settle(t)));
           return ctx.ui.notify(ts.length ? ts.map((t) => describeTask(t)).join("\n") : "no background tasks", "info");
         }
+        if (sub === "doctor") {
+          const dir = taskDir();
+          const st = statSync(dir);
+          const uid = process.getuid?.();
+          const mine = listTasks(owner);
+          const all = listTasks();
+          const owned = uid === undefined || st.uid === uid ? "" : `, OWNED BY uid ${st.uid}`;
+          return ctx.ui.notify(
+            [
+              `task dir: ${dir} (mode ${(st.mode & 0o777).toString(8)}${owned})`,
+              `tasks: ${all.length} on this machine, ${mine.length} in this session, ${mine.filter((t) => t.status === "running").length} running`,
+              `following: ${followed.size} · foreground: ${foreground.size} · waiting: ${waiting.size}`,
+              `auto-handoff: ${autoMs > 0 ? `${autoMs}ms in ${autoModes.join("/")}` : "off"} · tick ${tickMs}ms · key ${handoffKey}`,
+              `output cap: ${outputCapBytes()} bytes · node ${process.version}`,
+              `PI_BG_DIR=${process.env.PI_BG_DIR ?? "(default)"} PI_BG_MAX_OUTPUT_BYTES=${process.env.PI_BG_MAX_OUTPUT_BYTES ?? "(default)"}`,
+            ].join("\n"),
+            "info",
+          );
+        }
         if (sub === "cancel" && id) {
           const t = readTask(id);
           if (!t) return ctx.ui.notify(`no task ${id}`, "error");
@@ -303,7 +325,7 @@ export function createBgTasks(opts: BgOptions = {}) {
           refreshUi();
           return;
         }
-        ctx.ui.notify("usage: /bg [list | handoff | cancel <id> | clear]", "warning");
+        ctx.ui.notify("usage: /bg [list | doctor | handoff | cancel <id> | clear]", "warning");
       },
     });
 
