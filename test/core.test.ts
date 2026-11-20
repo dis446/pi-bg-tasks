@@ -112,13 +112,21 @@ test("bar and card rendering", () => {
   assert.deepEqual(renderCard([], fg), []);
 });
 
-test("row retention: success lingers 12s, running always kept, cap 8", () => {
+test("row retention: success lingers 12s, failure 30s, running always kept, cap 8", () => {
   const now = 1_000_000;
   const r = (id: string, state: "running" | "completed" | "failed", finishedAt?: number, updatedAt = now) => ({
     id, label: id, state, startedAt: 0, finishedAt, updatedAt,
   });
-  const kept = retainRows([r("ok-old", "completed", now - 13_000), r("ok-new", "completed", now - 1000), r("bad", "failed", now - 999_999)], now);
-  assert.deepEqual(kept.map((x) => x.id).sort(), ["bad", "ok-new"]);
+  const kept = retainRows(
+    [
+      r("ok-old", "completed", now - 13_000),
+      r("ok-new", "completed", now - 1000),
+      r("bad-old", "failed", now - 999_999),
+      r("bad-new", "failed", now - 20_000),
+    ],
+    now,
+  );
+  assert.deepEqual(kept.map((x) => x.id).sort(), ["bad-new", "ok-new"]);
   const flood = [
     ...Array.from({ length: 6 }, (_, i) => r(`run${i}`, "running", undefined, now - 100 * i)),
     ...Array.from({ length: 5 }, (_, i) => r(`fail${i}`, "failed", now, now - i)),

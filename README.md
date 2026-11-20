@@ -212,9 +212,8 @@ status but publishes no completion event — check `bg status` instead.
 
 - Card rows: `◌` running, `✓` completed, `×` failed; six-cell bar for
   determinate progress, elapsed time otherwise.
-- Successful rows linger 12 s, failures stay until the eight-row cap pushes them
-  out, running rows always stay. Most recently active first, up to six rows plus
-  `+N more`.
+- Successful rows linger 12 s, failed rows 30 s, running rows always stay. Most
+  recently active first, up to six rows plus `+N more`.
 - Footer shows `⏳ N bg` while anything runs.
 - `/bg` toggles the card; `/bg list`, `/bg doctor`, `/bg handoff`,
   `/bg cancel <id>`, `/bg clear` do the obvious things.

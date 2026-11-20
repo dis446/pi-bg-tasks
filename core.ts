@@ -755,6 +755,7 @@ export interface Row {
 
 export const ROW_LIMIT = 8;
 export const SUCCESS_LINGER_MS = 12_000;
+export const FAILURE_LINGER_MS = 30_000;
 
 export function rowFromTask(t: Task, now = Date.now()): Row {
   return {
@@ -769,10 +770,11 @@ export function rowFromTask(t: Task, now = Date.now()): Row {
   };
 }
 
-/** Retention: running always, successes 12 s, failures until the 8-row cap pushes them out. */
+/** Retention: running always, successes 12 s, failures 30 s (long enough to read, short enough to clear). */
 export function retainRows(rows: Row[], now = Date.now()): Row[] {
+  const linger = (r: Row) => (r.state === "completed" ? SUCCESS_LINGER_MS : r.state === "failed" ? FAILURE_LINGER_MS : Infinity);
   const kept = rows
-    .filter((r) => !(r.state === "completed" && now - (r.finishedAt ?? now) > SUCCESS_LINGER_MS))
+    .filter((r) => now - (r.finishedAt ?? now) <= linger(r))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const running = kept.filter((r) => r.state === "running");
   const rest = kept.filter((r) => r.state !== "running").slice(0, Math.max(0, ROW_LIMIT - running.length));

@@ -3,6 +3,13 @@
 Notable changes to `@dis446/pi-bg-tasks`. Format follows the version headings pi
 reads for package changelogs (`## [x.y.z]`).
 
+## [1.0.1] - 2026-11-20
+
+- The background card now clears failed rows: 30 s after a task fails, the row
+  goes away. Previously only successes expired (12 s) and failures stayed until
+  the eight-row cap pushed them out, so a burst of failures left the card
+  pinned to the transcript.
+
 ## [0.1.0] - 2026-11-05
 
 Initial release. A port of the background-task model from
