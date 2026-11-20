@@ -349,12 +349,12 @@ supply-chain surface. `npm ci` is the only supported way to install them here.
 
 Releases are cut by pushing a `v<version>` tag: `.github/workflows/release.yml`
 re-runs `npm run ci`, checks that the tag matches `package.json` and is an
-ancestor of `main`, then publishes with provenance (`--provenance`,
-`--access public`). Both workflows install with `npm ci --ignore-scripts`, so no
-dependency install script runs next to a publish credential. The publish step
-prefers npm **Trusted Publishing** (OIDC, no secret) and falls back to an
-`NPM_TOKEN` secret when one exists; the step decides that in the shell, because
-GitHub rejects a workflow that mentions `secrets` inside an `if`.
+ancestor of `main`, then publishes with npm **Trusted Publishing** (OIDC, no
+long-lived secret; provenance is generated automatically) and `--access public`.
+The npmjs.com side must trust that repo and the `release.yml` filename, and the
+publish job needs `id-token: write`. Both workflows install with
+`npm ci --ignore-scripts`, so no dependency install script runs next to a
+publish credential.
 
 ## Security
 
